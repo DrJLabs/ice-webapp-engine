@@ -2,15 +2,22 @@
   "name": "web",
   "type": "commonjs",
   "version": "1.0.0",
-  "description": "",
-  "author": "",
+  "description": "Ice WebApp Engine - Main web application",
+  "author": "DrJLabs",
   "license": "ISC",
-  "keywords": [],
+  "keywords": ["nextjs", "react", "webapp"],
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "test:ci": "vitest run --coverage",
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit --pretty",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest",
+    "test:unit": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "check-types": "tsc --noEmit --pretty"
+    "test:api": "vitest run tests/api"
   }
 }
