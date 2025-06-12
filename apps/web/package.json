@@ -1,0 +1,23 @@
+{
+  "name": "web",
+  "type": "commonjs",
+  "version": "1.0.0",
+  "description": "Ice WebApp Engine - Main web application",
+  "author": "DrJLabs",
+  "license": "ISC",
+  "keywords": ["nextjs", "react", "webapp"],
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit --pretty",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest",
+    "test:unit": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:api": "vitest run tests/api"
+  }
+}

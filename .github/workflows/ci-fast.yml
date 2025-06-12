@@ -1,0 +1,301 @@
+name: CI (Fast)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Optimized concurrency for organization runners
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Ephemeral runner optimization
+  RUNNER_TEMP: /tmp/github-runner-${{ github.run_id }}
+  NODE_OPTIONS: --max-old-space-size=4096
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  # Quality checks with DrJLabs organization runners
+  quality-checks:
+    name: Code Quality & Linting
+    runs-on: [self-hosted, linux, quality]
+    timeout-minutes: 10
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/quality-check || true
+          sudo umount $RUNNER_TEMP/quality-check 2>/dev/null || true
+          sudo rm -rf ~/setup-npm || true
+          sudo pkill -f npm || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/quality-check
+          sudo mount -t tmpfs -o size=2G tmpfs $RUNNER_TEMP/quality-check || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/quality-check/.npm-cache
+          npm config set tmp $RUNNER_TEMP/quality-check/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Type checking
+        working-directory: apps/web
+        run: npm run type-check
+
+      - name: ESLint
+        working-directory: apps/web
+        run: npm run lint
+
+      - name: Prettier check
+        working-directory: apps/web
+        run: npm run format:check
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo umount $RUNNER_TEMP/quality-check 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/quality-check || true
+
+  # Build with organization build runners
+  build-app:
+    name: Build Application
+    runs-on: [self-hosted, linux, build]
+    timeout-minutes: 15
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/build-app || true
+          sudo umount $RUNNER_TEMP/build-app 2>/dev/null || true
+          sudo rm -rf ~/setup-npm || true
+          sudo pkill -f npm || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/build-app
+          sudo mount -t tmpfs -o size=4G tmpfs $RUNNER_TEMP/build-app || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/build-app/.npm-cache
+          npm config set tmp $RUNNER_TEMP/build-app/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Build Next.js application
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/build-app/.next-tmp
+          mkdir -p $TMPDIR
+          npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ github.run_id }}
+          path: apps/web/.next/
+          retention-days: 1
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo umount $RUNNER_TEMP/build-app 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/build-app || true
+
+  # Unit tests with parallel execution
+  unit-tests:
+    name: Unit Tests
+    runs-on: [self-hosted, linux, test, parallel]
+    timeout-minutes: 10
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/unit-tests || true
+          sudo umount $RUNNER_TEMP/unit-tests 2>/dev/null || true
+          sudo rm -rf ~/setup-npm || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/unit-tests
+          sudo mount -t tmpfs -o size=2G tmpfs $RUNNER_TEMP/unit-tests || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/unit-tests/.npm-cache
+          npm config set tmp $RUNNER_TEMP/unit-tests/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run unit tests
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/unit-tests/.vitest-tmp
+          mkdir -p $TMPDIR
+          npm run test:unit
+        env:
+          NODE_OPTIONS: --max-old-space-size=2048
+
+      - name: Upload test coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-coverage-${{ github.run_id }}
+          path: apps/web/coverage/
+          retention-days: 1
+        continue-on-error: true
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo umount $RUNNER_TEMP/unit-tests 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/unit-tests || true
+
+  # Security scanning with DrJLabs security runners
+  security-scan:
+    name: Security Scanning
+    runs-on: [self-hosted, linux, security]
+    timeout-minutes: 15
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/security-scan || true
+          sudo umount $RUNNER_TEMP/security-scan 2>/dev/null || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/security-scan
+          sudo mount -t tmpfs -o size=2G tmpfs $RUNNER_TEMP/security-scan || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/security-scan/.npm-cache
+          npm config set tmp $RUNNER_TEMP/security-scan/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: apps/web
+        run: npm audit --audit-level moderate || true
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          docker run --rm -v "$(pwd):/workspace" \
+            aquasec/trivy:latest fs --security-checks vuln \
+            --format table /workspace/apps/web/package.json || true
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo umount $RUNNER_TEMP/security-scan 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/security-scan || true
+
+  # Summary job with basic organization runner
+  workflow-summary:
+    name: Workflow Summary
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 5
+    needs: [quality-checks, build-app, unit-tests, security-scan]
+    if: always()
+    steps:
+      - name: Workflow execution summary
+        run: |
+          echo "🚀 Fast CI Workflow Summary"
+          echo "=========================="
+          echo "Quality Checks: ${{ needs.quality-checks.result }}"
+          echo "Build Application: ${{ needs.build-app.result }}"
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Security Scan: ${{ needs.security-scan.result }}"
+          echo ""
+          echo "Run Details:"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
+          
+          # Calculate overall status
+          if [[ "${{ needs.quality-checks.result }}" == "success" && \
+                "${{ needs.build-app.result }}" == "success" && \
+                "${{ needs.unit-tests.result }}" == "success" && \
+                "${{ needs.security-scan.result }}" == "success" ]]; then
+            echo "✅ All fast CI checks passed!"
+            exit 0
+          else
+            echo "❌ Some fast CI checks failed - review logs above"
+            exit 1
+          fi 

@@ -1,0 +1,452 @@
+name: CI (Heavy)
+
+on: 
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description: 'Skip E2E tests'
+        type: boolean
+        default: false
+      skip_mutation:
+        description: 'Skip mutation testing'
+        type: boolean
+        default: false
+
+# Heavy tests with organization runners
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUNNER_TEMP: /tmp/github-runner-${{ github.run_id }}
+  NODE_OPTIONS: --max-old-space-size=6144
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  # E2E tests with specialized test runners
+  e2e-tests:
+    name: E2E Tests (Playwright)
+    runs-on: [self-hosted, linux, test, e2e]
+    timeout-minutes: 30
+    if: github.event.inputs.skip_e2e != 'true'
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/e2e-tests || true
+          sudo umount $RUNNER_TEMP/e2e-tests 2>/dev/null || true
+          sudo rm -rf ~/setup-npm || true
+          sudo pkill -f npm || true
+          sudo pkill -f chromium || true
+          sudo pkill -f firefox || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/e2e-tests
+          sudo mount -t tmpfs -o size=4G tmpfs $RUNNER_TEMP/e2e-tests || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/e2e-tests/.npm-cache
+          npm config set tmp $RUNNER_TEMP/e2e-tests/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install system dependencies for Playwright
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libgbm1 \
+            libxss1 \
+            libasound2-dev \
+            libatspi2.0-0 \
+            libgtk-3-0 \
+            libgdk-pixbuf2.0-0 \
+            libcairo-gobject2 \
+            libpango-1.0-0 \
+            libharfbuzz0b \
+            libgssapi-krb5-2 \
+            libgtk-4-1 \
+            libwoff1 \
+            libopus0 \
+            libwebpdemux2 \
+            libharfbuzz-icu0 \
+            libhyphen0 \
+            libflite1 \
+            libegl1 \
+            libevdev2 \
+            libgles2 \
+            gstreamer1.0-libav || true
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: |
+          rm -rf ~/.cache/ms-playwright* || true
+          npx playwright install chromium
+          npx playwright --version
+
+      - name: Build application
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/e2e-tests/.next-tmp
+          mkdir -p $TMPDIR
+          npm run build
+
+      - name: Start application
+        working-directory: apps/web
+        run: |
+          npm run start &
+          sleep 10
+          curl -f http://localhost:3000 || (echo "App failed to start" && exit 1)
+
+      - name: Run E2E tests
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/e2e-tests/.playwright-tmp
+          mkdir -p $TMPDIR
+          npx playwright test --reporter=list
+        env:
+          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3000
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: apps/web/playwright-report/
+          retention-days: 7
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo pkill -f "npm run start" || true
+          sudo pkill -f "next start" || true
+          sudo umount $RUNNER_TEMP/e2e-tests 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/e2e-tests || true
+
+  # Lighthouse performance testing
+  lighthouse-audit:
+    name: Lighthouse Performance Audit
+    runs-on: [self-hosted, linux, performance]
+    timeout-minutes: 20
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/lighthouse || true
+          sudo umount $RUNNER_TEMP/lighthouse 2>/dev/null || true
+          sudo pkill -f lighthouse || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/lighthouse
+          sudo mount -t tmpfs -o size=4G tmpfs $RUNNER_TEMP/lighthouse || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/lighthouse/.npm-cache
+          npm config set tmp $RUNNER_TEMP/lighthouse/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Build application
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/lighthouse/.next-tmp
+          mkdir -p $TMPDIR
+          npm run build
+
+      - name: Install Lighthouse
+        run: npm install -g @lhci/cli@0.12.x lighthouse
+
+      - name: Start application for performance audit
+        working-directory: apps/web
+        run: |
+          npm run start &
+          sleep 15
+          curl -f http://localhost:3000 || (echo "App failed to start" && exit 1)
+
+      - name: Run Lighthouse audit
+        run: |
+          lhci autorun --upload.target=temporary-public-storage || true
+          lighthouse http://localhost:3000 \
+            --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage" \
+            --output=html --output-path=./lighthouse-report.html || true
+
+      - name: Upload Lighthouse report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report-${{ github.run_id }}
+          path: ./lighthouse-report.html
+          retention-days: 7
+        continue-on-error: true
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo pkill -f "npm run start" || true
+          sudo pkill -f "next start" || true
+          sudo umount $RUNNER_TEMP/lighthouse 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/lighthouse || true
+
+  # Accessibility testing
+  accessibility-audit:
+    name: Accessibility Audit (Pa11y)
+    runs-on: [self-hosted, linux, quality]
+    timeout-minutes: 15
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/a11y || true
+          sudo umount $RUNNER_TEMP/a11y 2>/dev/null || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/a11y
+          sudo mount -t tmpfs -o size=2G tmpfs $RUNNER_TEMP/a11y || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/a11y/.npm-cache
+          npm config set tmp $RUNNER_TEMP/a11y/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Build application
+        working-directory: apps/web
+        run: npm run build
+
+      - name: Install Pa11y
+        run: npm install -g pa11y
+
+      - name: Start application for accessibility audit
+        working-directory: apps/web
+        run: |
+          npm run start &
+          sleep 10
+          curl -f http://localhost:3000 || (echo "App failed to start" && exit 1)
+
+      - name: Run Pa11y accessibility audit
+        run: |
+          pa11y http://localhost:3000 --reporter cli || true
+          pa11y http://localhost:3000 --reporter json > pa11y-report.json || true
+
+      - name: Upload Pa11y report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pa11y-report-${{ github.run_id }}
+          path: ./pa11y-report.json
+          retention-days: 7
+        continue-on-error: true
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo pkill -f "npm run start" || true
+          sudo pkill -f "next start" || true
+          sudo umount $RUNNER_TEMP/a11y 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/a11y || true
+
+  # Mutation testing with Stryker
+  mutation-testing:
+    name: Mutation Testing
+    runs-on: [self-hosted, linux, test, mutation]
+    timeout-minutes: 45
+    if: github.event.inputs.skip_mutation != 'true'
+    steps:
+      - name: Pre-job cleanup
+        run: |
+          sudo rm -rf $RUNNER_TEMP/mutation || true
+          sudo umount $RUNNER_TEMP/mutation 2>/dev/null || true
+
+      - name: Setup ephemeral tmpfs
+        run: |
+          sudo mkdir -p $RUNNER_TEMP/mutation
+          sudo mount -t tmpfs -o size=4G tmpfs $RUNNER_TEMP/mutation || echo "tmpfs already mounted"
+        continue-on-error: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Configure npm for ephemeral performance
+        run: |
+          npm config set cache $RUNNER_TEMP/mutation/.npm-cache
+          npm config set tmp $RUNNER_TEMP/mutation/.npm-tmp
+          npm config set timeout 300000
+          npm config set fetch-retries 5
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run mutation testing
+        working-directory: apps/web
+        run: |
+          export TMPDIR=$RUNNER_TEMP/mutation/.stryker-tmp
+          mkdir -p $TMPDIR
+          npx stryker run || true
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-${{ github.run_id }}
+          path: apps/web/reports/mutation/
+          retention-days: 7
+        continue-on-error: true
+
+      - name: Post-job cleanup
+        if: always()
+        run: |
+          sudo umount $RUNNER_TEMP/mutation 2>/dev/null || true
+          sudo rm -rf $RUNNER_TEMP/mutation || true
+
+  # Summary for heavy tests
+  heavy-summary:
+    name: Heavy Tests Summary
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 5
+    needs: [e2e-tests, lighthouse-audit, accessibility-audit, mutation-testing]
+    if: always()
+    steps:
+      - name: Heavy workflow execution summary
+        run: |
+          echo "🔬 Heavy CI Workflow Summary"
+          echo "==========================="
+          echo "E2E Tests: ${{ needs.e2e-tests.result }}"
+          echo "Lighthouse Audit: ${{ needs.lighthouse-audit.result }}"
+          echo "Accessibility Audit: ${{ needs.accessibility-audit.result }}"
+          echo "Mutation Testing: ${{ needs.mutation-testing.result }}"
+          echo ""
+          echo "Run Details:"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo ""
+          
+          # Count successful/completed tests
+          total_tests=0
+          successful_tests=0
+          skipped_tests=0
+          
+          if [[ "${{ needs.e2e-tests.result }}" != "skipped" ]]; then
+            total_tests=$((total_tests + 1))
+            if [[ "${{ needs.e2e-tests.result }}" == "success" ]]; then
+              successful_tests=$((successful_tests + 1))
+            fi
+          else
+            skipped_tests=$((skipped_tests + 1))
+          fi
+          
+          if [[ "${{ needs.lighthouse-audit.result }}" != "skipped" ]]; then
+            total_tests=$((total_tests + 1))
+            if [[ "${{ needs.lighthouse-audit.result }}" == "success" ]]; then
+              successful_tests=$((successful_tests + 1))
+            fi
+          else
+            skipped_tests=$((skipped_tests + 1))
+          fi
+          
+          if [[ "${{ needs.accessibility-audit.result }}" != "skipped" ]]; then
+            total_tests=$((total_tests + 1))
+            if [[ "${{ needs.accessibility-audit.result }}" == "success" ]]; then
+              successful_tests=$((successful_tests + 1))
+            fi
+          else
+            skipped_tests=$((skipped_tests + 1))
+          fi
+          
+          if [[ "${{ needs.mutation-testing.result }}" != "skipped" ]]; then
+            total_tests=$((total_tests + 1))
+            if [[ "${{ needs.mutation-testing.result }}" == "success" ]]; then
+              successful_tests=$((successful_tests + 1))
+            fi
+          else
+            skipped_tests=$((skipped_tests + 1))
+          fi
+          
+          echo "📊 Test Results: $successful_tests/$total_tests passed"
+          if [ $skipped_tests -gt 0 ]; then
+            echo "⏭️  Skipped Tests: $skipped_tests"
+          fi
+          
+          if [ $total_tests -eq 0 ]; then
+            echo "⚠️  All heavy tests were skipped"
+            exit 0
+          elif [ $successful_tests -eq $total_tests ]; then
+            echo "✅ All heavy tests passed!"
+            exit 0
+          else
+            echo "❌ Some heavy tests failed - review logs above"
+            exit 1
+          fi 

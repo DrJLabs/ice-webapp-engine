@@ -1,0 +1,241 @@
+name: Test DrJLabs Organization Runners
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of runner test to perform'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'basic'
+          - 'specialized'
+          - 'diagnosis'
+          - 'fallback'
+
+# Based on DrJLabs organization runner setup
+# NOTE: This is a diagnostic workflow - run manually only
+
+jobs:
+  test-basic-org-runner:
+    name: Test Basic Organization Runner
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 5
+    steps:
+      - name: Basic organization runner test
+        run: |
+          echo "✅ Basic DrJLabs organization runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Runner OS: $RUNNER_OS"
+          echo "Organization: ${{ github.repository_owner }}"
+          echo "Repository: ${{ github.repository }}"
+          
+  test-quality-runner:
+    name: Test Quality Assurance Runner
+    runs-on: [self-hosted, linux, quality]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Quality runner test
+        run: |
+          echo "✅ Quality assurance runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Specialization: Code quality and linting"
+          
+  test-build-runner:
+    name: Test Build Runner
+    runs-on: [self-hosted, linux, build]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Build runner test
+        run: |
+          echo "✅ Build runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Specialization: Application building"
+          
+  test-test-runner:
+    name: Test Testing Runner
+    runs-on: [self-hosted, linux, test]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Test runner test
+        run: |
+          echo "✅ Test runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Specialization: Unit and integration testing"
+          
+  test-parallel-runner:
+    name: Test Parallel Test Runner
+    runs-on: [self-hosted, linux, test, parallel]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Parallel test runner test
+        run: |
+          echo "✅ Parallel test runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Labels: ${{ toJson(runner.labels) }}"
+          echo "Specialization: Parallel test execution"
+          
+  test-e2e-runner:
+    name: Test E2E Runner
+    runs-on: [self-hosted, linux, test, e2e]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: E2E test runner test
+        run: |
+          echo "✅ E2E test runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Labels: ${{ toJson(runner.labels) }}"
+          echo "Specialization: End-to-end testing"
+          
+  test-security-runner:
+    name: Test Security Runner
+    runs-on: [self-hosted, linux, security]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Security runner test
+        run: |
+          echo "✅ Security runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Specialization: Security scanning"
+          
+  test-performance-runner:
+    name: Test Performance Runner
+    runs-on: [self-hosted, linux, performance]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Performance runner test
+        run: |
+          echo "✅ Performance runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Labels: ${{ toJson(runner.labels) }}"
+          echo "Specialization: Performance testing"
+          
+  test-mutation-runner:
+    name: Test Mutation Testing Runner
+    runs-on: [self-hosted, linux, test, mutation]
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Mutation testing runner test
+        run: |
+          echo "✅ Mutation testing runner active"
+          echo "Runner name: $RUNNER_NAME"
+          echo "Labels: ${{ toJson(runner.labels) }}"
+          echo "Specialization: Mutation testing"
+          
+  runner-environment-diagnosis:
+    name: DrJLabs Runner Environment Diagnosis
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 5
+    if: always()
+    steps:
+      - name: Comprehensive runner diagnosis
+        run: |
+          echo "🔍 DrJLabs Runner Environment Diagnosis"
+          echo "======================================"
+          echo "Runner Name: $RUNNER_NAME"
+          echo "Runner OS: $RUNNER_OS"
+          echo "Architecture: $(uname -m)"
+          echo "Hostname: $(hostname)"
+          echo "User: $(whoami)"
+          echo "Working Directory: $(pwd)"
+          echo ""
+          echo "System Information:"
+          echo "OS Release: $(cat /etc/os-release | head -2)"
+          echo "CPU Info: $(nproc) cores"
+          echo "Memory: $(free -h | grep Mem)"
+          echo "Disk Space: $(df -h / | tail -1)"
+          echo "Docker Available: $(docker --version 2>/dev/null || echo 'Not available')"
+          echo ""
+          echo "GitHub Context:"
+          echo "Repository: ${{ github.repository }}"
+          echo "Organization: ${{ github.repository_owner }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          
+      - name: Test runner capabilities
+        run: |
+          echo "🧪 Testing runner capabilities..."
+          echo "Node.js: $(node --version 2>/dev/null || echo 'Not available')"
+          echo "npm: $(npm --version 2>/dev/null || echo 'Not available')"
+          echo "Python: $(python3 --version 2>/dev/null || echo 'Not available')"
+          echo "Git: $(git --version 2>/dev/null || echo 'Not available')"
+          echo "Curl: $(curl --version 2>/dev/null | head -1 || echo 'Not available')"
+          echo "Chrome/Chromium: $(chromium --version 2>/dev/null || google-chrome --version 2>/dev/null || echo 'Not available')"
+          echo "Available disk space in /tmp: $(df -h /tmp | tail -1)"
+          echo "Tmpfs support: $(mount | grep tmpfs | wc -l) tmpfs mounts active"
+          
+  workflow-summary:
+    name: DrJLabs Runner Test Summary
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 5
+    needs: [
+      test-basic-org-runner,
+      test-quality-runner,
+      test-build-runner,
+      test-test-runner,
+      test-parallel-runner,
+      test-e2e-runner,
+      test-security-runner,
+      test-performance-runner,
+      test-mutation-runner,
+      runner-environment-diagnosis
+    ]
+    if: always()
+    steps:
+      - name: DrJLabs runner availability summary
+        run: |
+          echo "🏃‍♂️ DrJLabs Organization Runner Availability Summary"
+          echo "=================================================="
+          echo "Basic Runner: ${{ needs.test-basic-org-runner.result }}"
+          echo "Quality Runner: ${{ needs.test-quality-runner.result }}"
+          echo "Build Runner: ${{ needs.test-build-runner.result }}"
+          echo "Test Runner: ${{ needs.test-test-runner.result }}"
+          echo "Parallel Test Runner: ${{ needs.test-parallel-runner.result }}"
+          echo "E2E Runner: ${{ needs.test-e2e-runner.result }}"
+          echo "Security Runner: ${{ needs.test-security-runner.result }}"
+          echo "Performance Runner: ${{ needs.test-performance-runner.result }}"
+          echo "Mutation Test Runner: ${{ needs.test-mutation-runner.result }}"
+          echo "Environment Diagnosis: ${{ needs.runner-environment-diagnosis.result }}"
+          echo ""
+          
+          # Count successful runners
+          success_count=0
+          if [[ "${{ needs.test-basic-org-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-quality-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-build-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-test-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-parallel-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-e2e-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-security-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-performance-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          if [[ "${{ needs.test-mutation-runner.result }}" == "success" ]]; then success_count=$((success_count + 1)); fi
+          
+          echo "📊 Runner Availability: $success_count/9 specialized runners available"
+          
+          if [ $success_count -ge 7 ]; then
+            echo "✅ Excellent runner coverage - CI pipelines should work optimally"
+            exit 0
+          elif [ $success_count -ge 4 ]; then
+            echo "⚠️  Good runner coverage - Some workflows may fall back to basic runners"
+            exit 0
+          elif [ $success_count -ge 1 ]; then
+            echo "⚠️  Limited runner coverage - Most workflows will use basic runners"
+            exit 0
+          else
+            echo "❌ Critical: No specialized runners available - Check DrJLabs organization settings"
+            exit 1
+          fi 
